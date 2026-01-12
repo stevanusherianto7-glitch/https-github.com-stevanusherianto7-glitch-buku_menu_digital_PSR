@@ -9,10 +9,9 @@ import { PromoCarousel } from './components/PromoCarousel';
 import { Cart } from './components/Cart';
 import { useCartStore } from './store/cartStore';
 import { MenuItem } from './types';
-import { getMenuItems, saveMenuItems, deleteMenuItems } from './db';
+import { getAsset, setAsset, deleteAsset, base64ToBlob, getMenuItems, saveMenuItems, deleteMenuItems } from './db';
 import { Loader2 } from 'lucide-react';
 import { MENU_ITEMS, CATEGORIES } from './data'; // Import local data as fallback
-import { api, BACKEND_URL } from './api';
 
 const App: React.FC = () => {
   const searchParams = new URLSearchParams(window.location.search);
@@ -53,8 +52,21 @@ const App: React.FC = () => {
         const storedCategories = localStorage.getItem('pawon_categories_custom');
         setCategories(storedCategories ? JSON.parse(storedCategories) : CATEGORIES);
 
-        // No more image hydration needed, URLs are now permanent from the server
-        setItems(baseItems);
+        // Hydrate with custom images from IndexedDB
+        const hydratedItems = await Promise.all(
+          baseItems.map(async (item: MenuItem) => {
+            try {
+              const imageBlob = await getAsset('menu_image_' + item.id);
+              if (imageBlob) {
+                return { ...item, imageUrl: URL.createObjectURL(imageBlob) };
+              }
+            } catch (error) {
+              console.error(`Gagal memuat gambar kustom untuk ${item.name}:`, error);
+            }
+            return item;
+          })
+        );
+        setItems(hydratedItems);
 
       } catch (error) {
         console.error("Gagal memuat data menu:", error);
@@ -72,10 +84,17 @@ const App: React.FC = () => {
   const [headerImage, setHeaderImage] = useState<string>(DEFAULT_HEADER_IMG);
 
   useEffect(() => {
-    const storedHeaderUrl = localStorage.getItem('pawon_header_image');
-    if (storedHeaderUrl) {
-      setHeaderImage(storedHeaderUrl);
-    }
+    const loadHeaderImage = async () => {
+        try {
+            const imageBlob = await getAsset('headerImage');
+            if (imageBlob) {
+                setHeaderImage(URL.createObjectURL(imageBlob));
+            }
+        } catch (error) {
+            console.error("Gagal memuat foto header dari DB:", error);
+        }
+    };
+    loadHeaderImage();
   }, []);
 
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
@@ -123,37 +142,78 @@ const App: React.FC = () => {
   };
 
   const handleSaveAllItems = async (newItems: MenuItem[]) => {
+    setIsLoading(true);
     try {
-      const itemsToSave = newItems.map(draftItem => {
-        // Now, we save the permanent URLs from the backend directly.
-        // The logic to handle blob: URLs is no longer needed here,
-        // as the upload component provides a permanent URL.
-        return { ...draftItem, updatedAt: new Date() };
+      // Step 1: Process and save any new images (base64) found in the draft.
+      for (const draftItem of newItems) {
+        if (draftItem.imageUrl.startsWith('data:image')) {
+          const imageBlob = base64ToBlob(draftItem.imageUrl);
+          await setAsset('menu_image_' + draftItem.id, imageBlob);
+        }
+      }
+  
+      // Step 2: Prepare menu data for DB persistence by reverting temporary URLs.
+      const itemsToSaveForDB = newItems.map(draftItem => {
+        const persistentItem = { ...draftItem };
+        if (persistentItem.imageUrl.startsWith('data:image') || persistentItem.imageUrl.startsWith('blob:')) {
+          const originalItem = MENU_ITEMS.find(i => i.id === persistentItem.id);
+          persistentItem.imageUrl = originalItem 
+            ? originalItem.imageUrl 
+            : 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80';
+        }
+        persistentItem.updatedAt = new Date();
+        return persistentItem;
       });
 
-      await saveMenuItems(itemsToSave);
+      // Step 3: Save the cleaned menu data structure.
+      await saveMenuItems(itemsToSaveForDB);
       
-      setItems(newItems);
-      alert('Sukses! Perubahan menu telah disimpan.');
+      // Step 4: Hydrate the new state with fresh blob URLs for immediate UI update.
+      const hydratedItemsForState = await Promise.all(
+        newItems.map(async (item) => {
+          // Clean up old blob URLs before creating new ones
+          if (item.imageUrl.startsWith('blob:')) {
+            URL.revokeObjectURL(item.imageUrl);
+          }
+          const imageBlob = await getAsset('menu_image_' + item.id);
+          if (imageBlob) {
+            return { ...item, imageUrl: URL.createObjectURL(imageBlob) };
+          }
+          // If it's a new base64 image not yet converted, it will be handled on next hydration.
+          // For now, return as is. The hydration will fix it after this save.
+          // Or find the version from DB
+          const savedVersion = itemsToSaveForDB.find(i => i.id === item.id);
+          return { ...item, imageUrl: savedVersion?.imageUrl || item.imageUrl };
+        })
+      );
+  
+      // Step 5: Update main application state.
+      setItems(hydratedItemsForState);
+      alert('Sukses! Semua perubahan telah disimpan.');
       setActiveTab('menu');
-    } catch (error)
- {
-      console.error("Gagal menyimpan menu ke IndexedDB:", error);
-      alert('Gagal menyimpan perubahan. Penyimpanan browser mungkin penuh.');
+
+    } catch (error) {
+      console.error("Gagal menyimpan semua perubahan menu:", error);
+      alert('Terjadi kesalahan saat menyimpan. Perubahan mungkin tidak tersimpan.');
+    } finally {
+       setIsLoading(false);
     }
   };
 
   const handleUpdateHeaderImage = async (newImageBase64: string) => {
     try {
-      const response = await api.post('/upload', { image: newImageBase64 });
-      const newImageUrl = BACKEND_URL + response.data.url;
+      const imageBlob = base64ToBlob(newImageBase64);
+      await setAsset('headerImage', imageBlob);
       
-      setHeaderImage(newImageUrl);
-      localStorage.setItem('pawon_header_image', newImageUrl);
+      if (headerImage.startsWith('blob:')) {
+          URL.revokeObjectURL(headerImage);
+      }
+      
+      setHeaderImage(URL.createObjectURL(imageBlob));
       alert('Foto Header Berhasil Diperbarui!');
     } catch (error) {
-      console.error("Gagal mengunggah foto header:", error);
-      alert('Gagal menyimpan foto header. Pastikan server backend berjalan.');
+      console.error("Gagal menyimpan foto header:", error);
+      alert('Gagal menyimpan foto header. Mungkin penyimpanan penuh.');
     }
   };
 
@@ -162,10 +222,15 @@ const App: React.FC = () => {
       setIsLoading(true);
       
       localStorage.removeItem('pawon_categories_custom');
-      localStorage.removeItem('pawon_header_image');
       
       try {
+        await Promise.all(items.map(item => deleteAsset('menu_image_' + item.id)));
+        await deleteAsset('headerImage');
         await deleteMenuItems(); // Clear menu data from DB
+        
+        if (headerImage.startsWith('blob:')) {
+            URL.revokeObjectURL(headerImage);
+        }
       } catch (error) {
         console.error("Gagal menghapus data dari DB:", error);
       }

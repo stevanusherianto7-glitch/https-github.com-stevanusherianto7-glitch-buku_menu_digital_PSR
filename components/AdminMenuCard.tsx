@@ -3,7 +3,6 @@ import React, { useState, useRef } from 'react';
 import { Edit2, Image as ImageIcon, DollarSign, Upload, Camera, Check, Type, AlignLeft, Tag, Heart } from 'lucide-react';
 import { MenuItem } from '../types';
 import { ImageEditor } from './ImageEditor';
-import { api, BACKEND_URL } from '../api';
 
 interface AdminMenuCardProps {
   item: MenuItem;
@@ -44,23 +43,12 @@ export const AdminMenuCard: React.FC<AdminMenuCardProps> = ({ item, onUpdate, av
     fileInputRef.current?.click();
   };
 
-  const handleEditorSave = async (base64: string) => {
+  const handleEditorSave = (base64: string) => {
     setShowImageEditor(false);
     setEditorSource(null);
-    try {
-      const response = await api.post('/upload', { image: base64 });
-      const newImageUrl = BACKEND_URL + response.data.url;
-
-      // Revoke old blob URL to prevent memory leaks if it exists
-      if (item.imageUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(item.imageUrl);
-      }
-
-      onUpdate(item.id, { imageUrl: newImageUrl });
-    } catch (error) {
-      console.error("Gagal mengunggah gambar:", error);
-      alert("Gagal mengunggah gambar. Pastikan server backend berjalan.");
-    }
+    // Memperbarui state draft dengan gambar base64.
+    // Penyimpanan ke IndexedDB akan ditangani oleh App.tsx saat 'Simpan Semua' ditekan.
+    onUpdate(item.id, { imageUrl: base64 });
   };
 
   return (
