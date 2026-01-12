@@ -9,9 +9,10 @@ import { PromoCarousel } from './components/PromoCarousel';
 import { Cart } from './components/Cart';
 import { useCartStore } from './store/cartStore';
 import { MenuItem } from './types';
-import { getAsset, setAsset, deleteAsset, base64ToBlob, getMenuItems, saveMenuItems, deleteMenuItems } from './db';
+import { getMenuItems, saveMenuItems, deleteMenuItems } from './db';
 import { Loader2 } from 'lucide-react';
 import { MENU_ITEMS, CATEGORIES } from './data'; // Import local data as fallback
+import { api, BACKEND_URL } from './api';
 
 const App: React.FC = () => {
   const searchParams = new URLSearchParams(window.location.search);
@@ -52,21 +53,8 @@ const App: React.FC = () => {
         const storedCategories = localStorage.getItem('pawon_categories_custom');
         setCategories(storedCategories ? JSON.parse(storedCategories) : CATEGORIES);
 
-        // Hydrate with custom images from IndexedDB
-        const hydratedItems = await Promise.all(
-          baseItems.map(async (item: MenuItem) => {
-            try {
-              const imageBlob = await getAsset('menu_image_' + item.id);
-              if (imageBlob) {
-                return { ...item, imageUrl: URL.createObjectURL(imageBlob) };
-              }
-            } catch (error) {
-              console.error(`Gagal memuat gambar kustom untuk ${item.name}:`, error);
-            }
-            return item;
-          })
-        );
-        setItems(hydratedItems);
+        // No more image hydration needed, URLs are now permanent from the server
+        setItems(baseItems);
 
       } catch (error) {
         console.error("Gagal memuat data menu:", error);
@@ -84,17 +72,10 @@ const App: React.FC = () => {
   const [headerImage, setHeaderImage] = useState<string>(DEFAULT_HEADER_IMG);
 
   useEffect(() => {
-    const loadHeaderImage = async () => {
-        try {
-            const imageBlob = await getAsset('headerImage');
-            if (imageBlob) {
-                setHeaderImage(URL.createObjectURL(imageBlob));
-            }
-        } catch (error) {
-            console.error("Gagal memuat foto header dari DB:", error);
-        }
-    };
-    loadHeaderImage();
+    const storedHeaderUrl = localStorage.getItem('pawon_header_image');
+    if (storedHeaderUrl) {
+      setHeaderImage(storedHeaderUrl);
+    }
   }, []);
 
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
@@ -143,37 +124,20 @@ const App: React.FC = () => {
 
   const handleSaveAllItems = async (newItems: MenuItem[]) => {
     try {
-      // Clean items before saving to prevent persisting temporary `blob:` URLs.
       const itemsToSave = newItems.map(draftItem => {
-        const itemToSave = { ...draftItem };
-
-        // If imageUrl is a temporary blob, replace it with a permanent one for storage.
-        if (itemToSave.imageUrl.startsWith('blob:')) {
-          // Check if it's an item from the original dataset.
-          const originalItem = MENU_ITEMS.find(i => i.id === itemToSave.id);
-          if (originalItem) {
-            // Revert to its original, permanent URL.
-            itemToSave.imageUrl = originalItem.imageUrl;
-          } else {
-            // It's a new item. Use a generic, permanent placeholder URL.
-            // The actual custom image is already stored in the 'assets' DB.
-            itemToSave.imageUrl = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80';
-          }
-        }
-        
-        // Set the `updatedAt` field on every save.
-        itemToSave.updatedAt = new Date();
-
-        return itemToSave;
+        // Now, we save the permanent URLs from the backend directly.
+        // The logic to handle blob: URLs is no longer needed here,
+        // as the upload component provides a permanent URL.
+        return { ...draftItem, updatedAt: new Date() };
       });
 
       await saveMenuItems(itemsToSave);
       
-      // The main app state (`items`) should continue using the live `blob:` URLs for display.
       setItems(newItems);
       alert('Sukses! Perubahan menu telah disimpan.');
       setActiveTab('menu');
-    } catch (error) {
+    } catch (error)
+ {
       console.error("Gagal menyimpan menu ke IndexedDB:", error);
       alert('Gagal menyimpan perubahan. Penyimpanan browser mungkin penuh.');
     }
@@ -181,18 +145,15 @@ const App: React.FC = () => {
 
   const handleUpdateHeaderImage = async (newImageBase64: string) => {
     try {
-      const imageBlob = base64ToBlob(newImageBase64);
-      await setAsset('headerImage', imageBlob);
+      const response = await api.post('/upload', { image: newImageBase64 });
+      const newImageUrl = BACKEND_URL + response.data.url;
       
-      if (headerImage.startsWith('blob:')) {
-          URL.revokeObjectURL(headerImage);
-      }
-      
-      setHeaderImage(URL.createObjectURL(imageBlob));
+      setHeaderImage(newImageUrl);
+      localStorage.setItem('pawon_header_image', newImageUrl);
       alert('Foto Header Berhasil Diperbarui!');
     } catch (error) {
-      console.error("Gagal menyimpan foto header:", error);
-      alert('Gagal menyimpan foto header. Mungkin penyimpanan penuh.');
+      console.error("Gagal mengunggah foto header:", error);
+      alert('Gagal menyimpan foto header. Pastikan server backend berjalan.');
     }
   };
 
@@ -201,15 +162,10 @@ const App: React.FC = () => {
       setIsLoading(true);
       
       localStorage.removeItem('pawon_categories_custom');
+      localStorage.removeItem('pawon_header_image');
       
       try {
-        await Promise.all(items.map(item => deleteAsset('menu_image_' + item.id)));
-        await deleteAsset('headerImage');
         await deleteMenuItems(); // Clear menu data from DB
-        
-        if (headerImage.startsWith('blob:')) {
-            URL.revokeObjectURL(headerImage);
-        }
       } catch (error) {
         console.error("Gagal menghapus data dari DB:", error);
       }
@@ -226,7 +182,6 @@ const App: React.FC = () => {
   };
 
   const handleExitAdmin = () => {
-    // Confirmation dialog removed for immediate exit
     localStorage.removeItem('pawon_admin_mode');
     setIsAdminMode(false);
     setActiveTab('menu');
@@ -240,7 +195,6 @@ const App: React.FC = () => {
 
   const handleSecretTrigger = () => {
     if (isAdminMode) {
-      // Exit immediately without confirmation
       handleExitAdmin();
     } else {
       handleEnterAdmin();

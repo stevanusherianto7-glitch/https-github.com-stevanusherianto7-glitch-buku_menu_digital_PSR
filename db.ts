@@ -3,7 +3,7 @@ import { MenuItem } from './types';
 
 const DB_NAME = 'PawonSalamDB';
 const DB_VERSION = 1;
-const ASSET_STORE_NAME = 'assets';
+const ASSET_STORE_NAME = 'assets'; // Tetap didefinisikan untuk upgrade-safety
 const DATA_STORE_NAME = 'data';
 
 let db: IDBDatabase;
@@ -34,46 +34,6 @@ export const initDB = (): Promise<IDBDatabase> => {
       }
     };
   });
-};
-
-// --- Asset (Blob) Functions ---
-
-export const setAsset = async (key: string, value: Blob): Promise<void> => {
-  const dbInstance = await initDB();
-  return new Promise((resolve, reject) => {
-    const transaction = dbInstance.transaction(ASSET_STORE_NAME, 'readwrite');
-    const store = transaction.objectStore(ASSET_STORE_NAME);
-    const request = store.put(value, key);
-    
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
-};
-
-export const getAsset = async (key: string): Promise<Blob | null> => {
-  const dbInstance = await initDB();
-  return new Promise((resolve, reject) => {
-    const transaction = dbInstance.transaction(ASSET_STORE_NAME, 'readonly');
-    const store = transaction.objectStore(ASSET_STORE_NAME);
-    const request = store.get(key);
-
-    request.onsuccess = () => {
-        resolve(request.result ? (request.result as Blob) : null);
-    };
-    request.onerror = () => reject(request.error);
-  });
-};
-
-export const deleteAsset = async (key: string): Promise<void> => {
-    const dbInstance = await initDB();
-    return new Promise((resolve, reject) => {
-        const transaction = dbInstance.transaction(ASSET_STORE_NAME, 'readwrite');
-        const store = transaction.objectStore(ASSET_STORE_NAME);
-        const request = store.delete(key);
-
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-    });
 };
 
 // --- Menu Data Functions ---
@@ -114,18 +74,4 @@ export const deleteMenuItems = async (): Promise<void> => {
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });
-};
-
-
-// Helper to convert base64 to Blob
-export const base64ToBlob = (base64: string): Blob => {
-    const parts = base64.split(';base64,');
-    const contentType = parts[0].split(':')[1];
-    const raw = window.atob(parts[1]);
-    const rawLength = raw.length;
-    const uInt8Array = new Uint8Array(rawLength);
-    for (let i = 0; i < rawLength; ++i) {
-        uInt8Array[i] = raw.charCodeAt(i);
-    }
-    return new Blob([uInt8Array], { type: contentType });
 };

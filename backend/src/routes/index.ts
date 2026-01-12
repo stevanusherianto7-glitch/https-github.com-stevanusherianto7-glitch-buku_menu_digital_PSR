@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import authRoutes from './auth.routes';
 import employeeRoutes from './employee.routes';
+import uploadRoutes from './upload.routes'; // Import rute baru
 
 const router = Router();
 
@@ -106,5 +107,6 @@ router.get('/menu', (req, res) => {
 
 router.use('/auth', authRoutes);
 router.use('/employees', employeeRoutes);
+router.use('/upload', uploadRoutes); // Daftarkan rute upload
 
 export default router;

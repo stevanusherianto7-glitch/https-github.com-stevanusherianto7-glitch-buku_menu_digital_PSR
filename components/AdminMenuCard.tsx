@@ -3,7 +3,7 @@ import React, { useState, useRef } from 'react';
 import { Edit2, Image as ImageIcon, DollarSign, Upload, Camera, Check, Type, AlignLeft, Tag, Heart } from 'lucide-react';
 import { MenuItem } from '../types';
 import { ImageEditor } from './ImageEditor';
-import { setAsset, base64ToBlob } from '../db';
+import { api, BACKEND_URL } from '../api';
 
 interface AdminMenuCardProps {
   item: MenuItem;
@@ -48,19 +48,18 @@ export const AdminMenuCard: React.FC<AdminMenuCardProps> = ({ item, onUpdate, av
     setShowImageEditor(false);
     setEditorSource(null);
     try {
-      const imageBlob = base64ToBlob(base64);
-      await setAsset('menu_image_' + item.id, imageBlob);
-      const objectURL = URL.createObjectURL(imageBlob);
+      const response = await api.post('/upload', { image: base64 });
+      const newImageUrl = BACKEND_URL + response.data.url;
 
       // Revoke old blob URL to prevent memory leaks if it exists
       if (item.imageUrl.startsWith('blob:')) {
         URL.revokeObjectURL(item.imageUrl);
       }
 
-      onUpdate(item.id, { imageUrl: objectURL });
+      onUpdate(item.id, { imageUrl: newImageUrl });
     } catch (error) {
-      console.error("Gagal menyimpan gambar ke IndexedDB:", error);
-      alert("Gagal menyimpan gambar. Penyimpanan browser mungkin penuh.");
+      console.error("Gagal mengunggah gambar:", error);
+      alert("Gagal mengunggah gambar. Pastikan server backend berjalan.");
     }
   };
 
